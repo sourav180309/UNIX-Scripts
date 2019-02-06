@@ -1,0 +1,15 @@
+ls | grep '.txt|.php'
+Let us consider this example, in this we are listing all the files in the present working directory. Using pipe we are passing the output of ls to grep. The grep command will check whether there is any file with .text|.php extension.
+ls | egrep '.txt|.php'
+Now consider the same example with egrep, here egrep will check for files with either .txt or .php extension. By using egrep we can even search for multiple pattern, files at a time using one command. We can make grep also do the same by escaping the characters.
+sed 's/unix/linux/g' file.txt
+awk '{print}' employee.txt
+awk '/manager/ {print}' employee.txt
+awk '{print $1,$4}' employee.txt #############( By Default white space ) 
+awk -F "|" '{ print $4 }' Notes.data #### This is for | seperated 
+Display the file names that matches the pattern 
+$grep -l "unix" *
+$grep -l "unix" f1.txt f2.txt f3.xt f4.txt
+Show line number while displaying the output using grep -n
+grep -n "unix" file.txt
+grep "word" file_name.txt | wc -l
