@@ -1,0 +1,601 @@
+#!/bin/ksh
+#######################################################################################################################################################
+#																		      #
+#FILENAME : KPEDS_Envelope_Validation_Script.sh													      #
+#LOCATION : /lz/lz01/maedslz/NMF_DEV_RC/KPEDS/scripts												      #
+#PURPOSE :  File Validation															      #
+#																		      #
+#DESCRIPTION: This Envelope Validation Script used to do the File Envelope works in the Source File like Maintaining the Error file, Comma File and   #
+# Incorrect naming conversion files, duplicate files, zero byte files, special character file, Multiple ST and SE file, Flag file, Control file.      #
+#																		      #
+#																		      #
+#																		      #
+#USAGE:																		      #
+#       ex: sh Envelope_Validation_Script.sh 													      #
+#																		      #
+#																		      #
+#ASSUMPTIONS  : NIL																      #
+#																		      #
+#REVISION HISTORY:																      #
+#																		      #
+#AUTHOR                 DATE         	DETAILS OF CHANGE											      #
+#MANJUNATH KARANAM      08/05/2015      Script Modified												      #
+#																		      #
+#######################################################################################################################################################
+#																		      #
+######################################################## Parameters in Configuration File #############################################################									      
+
+#################### Derive ConfigFile Path and Execute Configuration file , Etl_Function script ####################
+
+
+script_file_path=`dirname $0`
+
+if [ ${script_file_path} = "." ]
+then
+        echo "Script is executed from the scripts path"
+        script_file_path=`pwd`
+else
+        script_file_path=`dirname $0`
+fi
+
+echo Script Path is: $script_file_path
+config_path=`echo $script_file_path | sed s/scripts/config/g`
+echo Config Path is: $config_path
+
+. ${config_path}/Basic_EnvSetup_Batch_Config.cfg $v_env $v_batch
+#. ${v_ScriptDir}/Etl_Db_Proc_Function.sh
+
+																		      
+logmsg "------------- Display of parameters set for Envelop Validation -------------	"
+logmsg "	Log file		:	${v_LogFile}				"
+logmsg "	Inbound Path		: 	${v_InboundPath}			"
+logmsg "	Work Directory		: 	${v_WorkDir}				"
+logmsg "	Archival Path		: 	${v_ArchDir}				"
+logmsg "	Error directory		:	${v_ErrorDir}				"
+logmsg "	Notify ProdSupp Mail id	:	${v_MailToFailure}			"
+logmsg "	Notify Business Mail id	:	${v_BusinessUser}			"
+logmsg "	Notify SrcSystm Mail id	:	${v_SrcSystemSupportDL}			"
+logmsg "---------------------- END of Display of Parameters ------------------------	"
+
+#################### Function To Identify the Error File and Move the File to Error Directory ####################
+
+errfile()
+{
+
+if [ -e ${v_InboundPath}/${data_file} ]
+then
+	mv ${v_InboundPath}/$1 $v_ErrorDir/$1
+	mailx -s " ERROR:${2} for ${data_file} Failed" ${v_SrcSystemSupportDL},${v_MailToFailure},${v_BusinessUser} < ${v_MailContent_FileValidation}
+#	logmailF " ERROR:${2} for ${data_file} Failed" "$v_MailContent_FileValidation"
+	logmsg "	File ${v_InboundPath}/$1 moved to error directory"
+else
+	logerr "	File ${v_InboundPath}/$1 not moved to error directory"
+	mailx -s " ERROR:${2} for ${data_file} Failed and file not found in Inbound Dir " ${v_SrcSystemSupportDL},${v_MailToFailure},${v_BusinessUser} < $v_MailContent_FileValidation
+#	logmailF " ERROR:${2} for ${data_file} Failed and file not found in Inbound Dir " "$v_MailContent_FileValidation"
+fi
+}
+
+#################### Function To Get the New Row Count in the Source File ####################
+
+exceptional_rules()
+{
+
+logmsg "------------- Exceptional rules for File $file (only if applicable)-------------"
+
+row_count=`cat ${v_InboundPath}/${data_file} | wc -l`
+  
+if [ $row_count -lt 2 ]
+then
+	logmsg "	File is Recieved in a single line adding new line charecter after delimitter ~"
+	sed 's/~/~\
+       /g' ${v_InboundPath}/${data_file} > ${v_InboundPath}/${data_file}_one_to_multpl_line
+
+	mv ${v_InboundPath}/${data_file}_one_to_multpl_line  ${v_InboundPath}/${data_file}
+	
+	row_count=`cat ${v_InboundPath}/${data_file} | wc -l`
+	logmsg "	New row count for the file after handling it exceptionally is $row_count "
+fi
+
+#################### Function To Remove the Comma in the Source File ####################
+
+#com_count=`grep -n ',' ${v_InboundPath}/${data_file} | wc -l`
+
+#if [ $com_count -gt 0 ]
+#then
+#        logmsg "	Logging source rows with commas, number of rows found:"$com_count" "
+#        grep -n ',' ${v_InboundPath}/${data_file} >> ${v_ArchDir}/${data_file}_comma_file
+#        mv ${v_InboundPath}/$data_file ${v_InboundPath}/com_fix.tmp
+#        logmsg "	Removing comma from file"
+#        sed s/,//g ${v_InboundPath}/com_fix.tmp > ${v_InboundPath}/${data_file}
+#        rm ${v_InboundPath}/com_fix.tmp
+#fi
+
+#################### Function To Handle the REF and SY Segment in the Source File ####################
+
+social_sec_count=`grep -n 'REF\*SY' ${v_InboundPath}/${data_file} | wc -l`
+
+if [ $social_sec_count -gt 0 ]
+then  
+	logmsg "	Found Social Scurity Numbers inside the file , Removing SSN numbers from file"
+
+	rm -f  ${v_InboundPath}/${data_file}_temp_ref
+	awk -F '*' '{ if ($1$2 == "REFSY") { gsub(/[0-9]/, "0", $3); print $1"*"$2"*"$3 } else { print $0 } }'  ${v_InboundPath}/${data_file} > ${v_InboundPath}/${data_file}_temp_ref
+
+#	while read line
+#	do
+#		txt=`echo $line | awk -F '*' ' { print $1$2 }'`
+#		if [ "$txt" = 'REFSY' ]
+#        	then
+#               	new_line=`echo $line | sed s/[0-9]/0/g`
+#        	else
+#                	new_line=$line
+#		fi
+#		echo "$new_line" >>  ${v_InboundPath}/${data_file}_temp_ref
+#	done < ${v_InboundPath}/${data_file}
+
+	logmsg "	Removed ${social_sec_count} Social Security Numbers from the file"
+	mv  ${v_InboundPath}/${data_file}_temp_ref ${v_InboundPath}/${data_file}
+fi
+
+logmsg "------------- END of Exceptional rules -------------"
+}
+
+#################### Function To Copying the Backup of Processed File in the Archive Directory ####################
+
+archfile()
+{
+
+if [ -e ${v_InboundPath}/${data_file} ]
+then
+	cp ${v_InboundPath}/${data_file} ${v_ArchDir}/${data_file}
+	gzip ${v_ArchDir}/${data_file} 
+	exceptional_rules ${data_file}
+	mv ${v_InboundPath}/${data_file} ${v_WorkDir}/${data_file}
+	#logmailS " $data_file File validated and copied to Archive folder Successfully"
+	logmsg "	File ${data_file} validated and kept ready for Processing, Also available in Archive Directory."
+else
+	logerr "File ${v_InboundPath}/${data_file} not copied to archive directory"
+	logmailF "error while copying the validated file $data_file to archive directory -- file does not exists"
+fi
+}
+
+
+#################### Check for Control File or Flag Files received and generate list of files ####################
+
+logmsg "------------- Preperation of new set of Files for Validation -------------"
+rm -f ${v_InboundPath}/${v_SearchPattern}_file_list.txt
+v_loop1_count=0
+while [ $v_loop1_count -lt $v_LoopCount ]
+do
+
+#################### case when control file received ####################
+
+if [ $v_CntrlFileCheck = 'Y' ]
+then
+
+	logmsg "	Looking for Control File Arraival... ..."
+	if [ -e ${v_InboundPath}/${v_SearchPattern}*.ctl ]
+	then
+    		logmsg "	Control file received"
+    		logmsg "        extracting file names from control file"
+    		rm -f ${v_InboundPath}/${v_SearchPattern}_master_ctrl_file.ctl
+    		cat ${v_InboundPath}/${v_SearchPattern}*.ctl >> ${v_InboundPath}/${v_SearchPattern}_master_ctrl_file.ctl
+    		awk -F '~' ' { print $2 } '  ${v_InboundPath}/${v_SearchPattern}_master_ctrl_file.ctl > ${v_InboundPath}/${v_SearchPattern}_file_list.txt
+    		logmsg "	Master control file generated and list file is created using it"
+    		logmsg "	All Control Files are archived to avoid the same list of files in next iteration"
+    		#mailx -s "mastercontrol file list contains these files " manjunath.karanam@kp.org < ${v_InboundPath}/${v_SearchPattern}_master_ctrl_file.ctl
+    		mv ${v_InboundPath}/${v_SearchPattern}*.ctl ${v_ArchDir}/
+	fi
+
+#################### case when flag files received ####################
+
+elif [ $v_ArrivalCheck = 'Y' -a $v_CntrlFileCheck = 'N' ]
+then
+	logmsg "	Control File not required, looking for Flag files received"
+        if [ -e ${v_InboundPath}/${v_SearchPattern}*.flg ]
+        then       	
+                if [ ${v_SearchPattern} = 'IEHP_KPEDS' ]
+                then
+                 ls -1 ${v_InboundPath}/${v_SearchPattern}*.flg | awk -F '/' ' { print $NF } ' | sed s/flg/edi/g > ${v_InboundPath}/${v_SearchPattern}_file_list.txt
+                logmsg "        Generated list file using flag files "
+                else
+                ls -1 ${v_InboundPath}/${v_SearchPattern}*.flg | awk -F '/' ' { print $NF } ' | sed s/flg/txt/g > ${v_InboundPath}/${v_SearchPattern}_file_list.txt
+                logmsg "        Generated list file using flag files "
+                fi
+
+        fi
+        
+#################### Prepare File List based on the File Received ####################
+
+elif [ $v_ArrivalCheck = 'N' -a $v_CntrlFileCheck = 'N' ]
+then
+        logmsg "	Control file and Flag file Arrival Check not required"
+        logmsg "	File list is prepared based on the all available files present in folder"
+        if [ -e ${v_InboundPath}/${v_SearchPattern}*.txt ]
+ 	then
+ 		sleep 10
+		for list in `ls ${v_InboundPath}/${v_SearchPattern}*.txt`
+ 		do
+ 			basename $list >> ${v_InboundPath}/${v_SearchPattern}_file_list.txt
+ 		done
+ 	fi
+fi
+
+if [ $v_loop1_count -ge 1 ]
+then
+	logmsg "	If Files are not found  Process will sleep for $v_SleepTime Seconds"
+	logmsg "	Serach for Files will end after $v_LoopCount iterations: this is $v_loop1_count iteration"
+	logmsg "	Sleeping for $v_SleepTime seconds ... "
+	sleep $v_SleepTime
+fi
+
+if [ -e ${v_InboundPath}/${v_SearchPattern}_file_list.txt ]
+then
+	logmsg "	Files found and File List for Envelope validation is prepared"
+	v_loop1_count=`expr $v_LoopCount + 0` 
+fi
+
+v_loop1_count=`expr $v_loop1_count + 1`
+logmsg "------------- Preperation of new set of Files for Validation -------------"
+done
+
+
+#################### Function To Check the Proper File Naming Convention ####################
+
+Name_Val()
+{
+# V2: filenaming convention check
+# --------------------------------------------
+# get file naming convention info
+
+logmsg "------------- FILE NAME VALIDATION -------------"
+logmsg "	validating file naming convention for file $data_file" 
+#extract naming convention from filename
+##ASSUMPTION 1: Extraction of file name is generalized based on the assumption of the file format with "_" as the char repeats in between 
+##ASSUMPTION 2: Assuming the file format does not contains any other numeric values apart form date format.
+## Note: Any other project specific can be handled by adding the additional step to derive the file name. 
+
+
+	v_FILE_NAME=`echo $data_file | awk -F "_" ' { print $1,$2,$3 } '  | sed s/" "/"_"/g | sed s/[0-9]//g`
+
+# check if file name is to be validated
+if [ $v_NamingConvCheck = 'Y' ]
+then
+    if [ $v_FILE_NAME = $v_FileConv ]
+    then
+	return_code=S
+	logmsg "	File naming validation is success"  
+    else
+	logerr "Naming Convention check for $data_file failed "
+  	return_code=E
+	errfile "$data_file" "Naming convention"
+    fi
+else
+	logmsg "	Naming convention check not required for this file"
+	return_code=S
+fi
+	logmsg "	Retun code from the File Name Validation loop is $return_code"
+} 
+
+#################### Function To Get the Time Stamp Value for File Naming Convention ####################
+
+Timestamp_Val()
+{
+# V3: timestamp check
+# --------------------------------------------
+# get file naming convention info
+logmsg "------------- FILE TIMESTAMP CHECK -------------"
+
+logmsg "	Validating File Timestamp Convention for File $data_file"
+
+# check if file name is to be validated
+if [ $v_TimeConvCheck = 'Y' ]
+then
+	#  value assignments for timestamp check as per project requirements
+	v_FILE_CC_max=2014
+	v_FILE_MO_max=13
+	v_FILE_MO_setmax=9
+	v_FILE_DD_max=32
+	v_FILE_HH_max=24
+	v_FILE_MM_max=60
+	v_FILE_SS_max=60
+	#extract file timestamp assuming there are no other numeric values in the file naming convention
+	# if any other exceptions should be handled project specific.
+	
+	v_FILE_TIMESTMP=`echo $data_file | cut -d"." -f1 | sed s/[A-Z][a-z]//g `
+	
+	v_FULL_FILE_NAME=`echo $data_file | awk -F '~' ' { print $1 }'`
+
+	
+ 
+	logmsg "	Time stamp associated with the file is $v_FILE_TIMESTMP"
+	
+	## Timestamp, year , month, day details are derived based on the assumption the string arrives in the format YYYYMMDDHHMMSS. 
+	## Any other formats should be taken care for project specific.
+
+	v_FILE_CC=`echo $v_FILE_TIMESTMP | awk  -F" " '{ print substr($0,1,4)  } ' `
+	v_FILE_MO=`echo $v_FILE_TIMESTMP | awk  -F" " '{ print substr($0,5,2)  } ' `
+	v_FILE_DD=`echo $v_FILE_TIMESTMP | awk  -F" " '{ print substr($0,7,2)  } ' `
+	v_FILE_HH=`echo $v_FILE_TIMESTMP | awk  -F" " '{ print substr($0,9,2)  } ' `
+	v_FILE_MM=`echo $v_FILE_TIMESTMP | awk  -F" " '{ print substr($0,11,2)  } ' `
+	v_FILE_SS=`echo $v_FILE_TIMESTMP | awk  -F" " '{ print substr($0,13,2)  } ' `
+	
+	# Sample calcutations are shown in the below. ## project specific calculations can be taken care as required.
+   
+	#if [ `expr $v_FILE_CC + 0` -gt `expr $v_FILE_CC_max + 0` -a `expr $v_FILE_MO + 0` -lt `expr $v_FILE_MO_max + 0` -a `expr $v_FILE_DD + 0` -lt `expr $v_FILE_DD_max + 0` -a `expr $v_FILE_HH + 0` -lt `expr $v_FILE_HH_max + 0` -a `expr $v_FILE_MM + 0` -lt `expr $v_FILE_MM_max + 0` ]
+	#then
+		#logmsg "	Timestamp Check is Success"
+	#	return_code=S
+	#else
+		#logerr "	Timestamp Check Failed"
+		#return_code=E
+		#errfile "$data_file" "Timestamp check"
+	#fi
+
+	if [ `expr $v_FILE_CC + 0` -gt `expr $v_FILE_CC_max + 0` ]
+        then
+                logmsg "        Timestamp Check is Success"
+                return_code=S
+        elif [ `expr $v_FILE_CC + 0` -eq `expr $v_FILE_CC_max + 0` -a `expr $v_FILE_MO + 0` -gt `expr $v_FILE_MO_setmax + 0` ]
+        then
+                logmsg "        Timestamp Check is Success"
+                return_code=S
+        else
+                logerr "        Timestamp Check Failed"
+                return_code=E
+                errfile "$data_file" "Timestamp check"
+        fi
+
+else
+	logmsg "	Naming convention check not required for this file"
+	return_code=S
+fi
+
+logmsg "	Retun code from the Timestamp validation loop is $return_code"
+
+}
+
+#################### Function To Identify the Duplicate File ####################
+
+Dup_Check()
+{
+# V1: duplicate file check
+# --------------------------------------------
+logmsg "------------- DUPLICATE CHECK -------------"
+# get duplicate file check info
+
+logmsg "	Duplicate file check for file $data_file"
+
+
+if [ $v_DupCheck = 'Y' ]
+then
+	# check if file has been processed earlier quering the batch execution table from DB
+	echo "set heading off;
+	set feedback off;
+	set linesize 800;
+	select count(1), FILE_NM from KPEDS_T.ETL_KPEDS_AUDIT_FILE_INFO where FILE_NM ='"$data_file"' group by FILE_NM;
+	exit;"  | sqlplus -s $db_login > dc.txt
+	#check if the temp file has data; if no data is there DB has not fetched any rows
+	
+	if [ -s dc.txt ]
+	then
+		v_FILE_DUP_num=`head -2 dc.txt | tail -1 | awk -F " " ' { printf $1 } '`
+    		v_FILE_DUP_name=`head -2 dc.txt | tail -1 | awk -F " " ' { printf $2 } '`
+	else
+    		v_FILE_DUP_num=`expr 0`
+	fi
+	
+
+	# compare the count of file from DB with default 0
+	
+	if [ `expr $v_FILE_DUP_num`  -eq `expr 0` ]
+	then
+		logmsg "	Duplicate file check passed"
+		return_code=S
+	else
+		logerr "Duplicate file check failed"
+     		return_code=E
+     		errfile "$data_file" "Duplicate file check"
+	fi
+else
+	logmsg "	Duplicate file check not required for this file"
+	return_code=S
+fi
+
+	## If the project does not contain the AUDIT_FILE table  Validate the dup check based on the file pattern and dup check \
+	## for this we are calling the functions name_val and Timestamp_val defined earlier. 
+	## If both the values are retuning the RETURN_CODE as "S" then we can go ahead with marking it success
+	
+Name_Val 
+Timestamp_Val
+
+	if [ $return_cod  = "S" ]
+	then
+		logmsg "	Duplicate file check passed"
+		return_code=S
+	else
+		logerr "Duplicate file check failed"
+     		return_code=E
+     		errfile "$data_file" "Duplicate file check"
+	fi
+	
+rm -f dc.txt
+
+logmsg "	Retun code from the duplicate file check loop is $return_code"
+}
+
+#################### Function To Identify the Flag File ####################
+Flag_File_Val()
+{
+# V4: Flag file check
+# --------------------------------------------
+# get flag file check info
+
+logmsg "------------- FLAG FILE CHECK -------------"
+logmsg "	Flag File Validation for File $data_file"
+
+if [ $v_FlagFileCheck = 'Y' ]
+then
+	v_GENFLG_FILE_NM=`echo $data_file | awk -F '.' ' { print $1".flg" } '`
+	logmsg "	Flag file name should be $v_GENFLG_FILE_NM"
+
+	if [ -e ${v_InboundPath}/$v_GENFLG_FILE_NM ]
+	then
+		logmsg "	Flag File Validation is Success"
+		rm -f ${v_InboundPath}/$v_GENFLG_FILE_NM
+		return_code=S
+	else
+		logmsg "	Flag File Validation Failed"
+		return_code=E
+		errfile "$data_file" "Flag file check"
+	fi
+else 
+	logmsg "	Flag File Validation not required"
+	return_code=S
+fi
+
+logmsg "	Retun code from the Flag File Validation loop is $return_code"
+}
+
+#################### Function To Identify the Zero Byte File ####################
+
+Zero_Byte()
+{
+# V5: zero byte check
+# --------------------------------------------
+# get zero byte check info
+logmsg "------------- ZERO BYTE CHECK -------------"
+logmsg "	Zero Byte validation for file $data_file"
+
+
+if [ $v_ZeroByteCheck = 'Y' ]
+then
+	v_FILE_PATH=${v_InboundPath}/$data_file
+	
+	if [ -s $v_FILE_PATH ]
+	then
+        	logmsg "	Non-Zero Byte File Validation is Success"
+         	return_code=S
+	else
+	 	logerr "	Non-Zero Byte File Validation Failed"
+	 	return_code=E
+         	errfile "$data_file" "Non-Zero byte check"
+	fi
+else
+	logmsg "	Non-Zero Byte File Validation not required for this file"
+	return_code=S
+fi
+	logmsg "	Retun code from the Non-Zero Byte File Validation loop is $return_code"
+
+}
+
+#################### Function To Identify the Control File ####################
+
+Control_Val()
+{
+#V6: Control file count check
+#--------------------------------------------
+#get flag file check info
+
+logmsg "------------- CONTROL FILE CHECK -------------"
+logmsg "	Validating Control File Count for File $data_file"
+
+v_CTL_FLE_ROWS=`expr 0`
+
+if [ $v_CntrlFileCheck = 'Y' ]
+then
+	#check if control file exists
+	if [ -e ${v_InboundPath}/${v_SearchPattern}*.ctl ]
+	then
+		logmsg "	Control file available for count check"
+		#fetch control file name
+   		v_CONTROL_FILE_NME=`ls -t ${v_InboundPath}/${v_SearchPattern}*.ctl`
+		v_FULL_FILE_NAME=$data_file
+     		# extracting flags from temp file
+
+		for filec in `cat $v_CONTROL_FILE_NME`
+		do
+			v_CTL_FLE=`echo $filec | awk -F '~' ' { print $2 }'`
+			if [ $data_file = $v_CTL_FLE ]
+			then
+				v_CTL_FLE_ROWS=`echo $filec | awk -F '~' ' { print $6 }'`
+			fi
+         	done
+
+		#calculate the number of lines in the data file
+		v_CTL_FLE_CNT=`awk -F '*' -v c=0 '/CLM/ { c=c+1 }  END { print c }' ${v_InboundPath}/$data_file`
+		v_CTL_FLE_CNT1=`wc -l ${v_InboundPath}/$data_file`
+
+		if [ `expr $v_CTL_FLE_ROWS` -eq `expr $v_CTL_FLE_CNT` ]
+		then
+			logmsg "	Control file name  $v_CONTROL_FILE_NME"
+			logmsg "	Control File Count Validation is Success"
+			logmsg "	Counts $v_CTL_FLE_CNT/$v_CTL_FLE_ROWS"
+			return_code=S
+		else
+			logmsg "	Control file name  $v_CONTROL_FILE_NME"
+			logmsg "	Control File Count Validation FAILED"
+			logmsg "	Counts $v_CTL_FLE_CNT/$v_CTL_FLE_ROWS"
+			return_code=E
+			errfile "$data_file" "Control count check"
+		fi
+	else
+		logmsg "	Control File NOT AVAILABLE for count check"
+	fi
+else
+	logmsg "	Control File Count validation is not required"
+	return_code=S
+fi
+
+logmsg "	Retun code from the Control File Count validation loop is $return_code"
+
+}
+
+#################### Call The File Envelope Validation Functions ####################
+
+
+if [ -f ${v_InboundPath}/${v_SearchPattern}_file_list.txt ]
+then
+	for filei in `cat ${v_InboundPath}/${v_SearchPattern}_file_list.txt`
+	do													
+        	logmsg "------------- Start of Envelope Validation for ${filei} -------------"
+        	export data_file=$filei
+                v_m1_FULL_FLE_NME=`echo $filei | awk -F '' ' { print $1 }'`
+	        		
+		Flag_File_Val "$filei"
+      		if [ $return_code = 'S' ]
+        	then
+                       Dup_Check "$filei"
+			if [ $return_code = 'S' ]
+			then
+                	       #Timestamp_Val "$filei"
+				logmsg "	Timestam Validation Not Required "
+	        	        if [ $return_code = 'S' ]
+                		then
+        			       Name_Val "$filei"
+                			if [ $return_code = 'S' ]
+                			then
+                			       Zero_Byte "$filei"
+                				if [ $return_code = 'S' ]
+                				then
+	        					Control_Val "$filei"
+	        					if [ $return_code = 'S' ]
+        						then
+        						       archfile "$filei"
+  	        					fi
+	        				fi
+	  				fi
+				fi
+			fi
+		fi
+		
+		logmsg "------------- End of Envelope Validation for ${filei} -------------"
+	done
+	
+	mailx -s " INFO: Given file list validated and acceepted for processing. " ${v_SrcSystemSupportDL} < ${v_InboundPath}/${v_SearchPattern}_file_list.txt
+	logmailS " INFO: Given file list validated and acceepted for processing. " "${v_InboundPath}/${v_SearchPattern}_file_list.txt" 
+
+	mv  ${v_InboundPath}/${v_SearchPattern}_file_list.txt ${v_ArchDir}/${v_SearchPattern}_Processed_listfile`date +"%C%y%m%d.%H%M%S"`.lst
+else
+	logmsg "	WARNING -- Files are not valid/arrived and file list not created -- "
+fi
